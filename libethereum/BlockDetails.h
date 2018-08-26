@@ -22,7 +22,6 @@
 #pragma once
 
 #include <unordered_map>
-#include <libdevcore/db.h>
 #include <libdevcore/Log.h>
 #include <libdevcore/RLP.h>
 #include "TransactionReceipt.h"
@@ -37,18 +36,20 @@ namespace eth
 static const unsigned c_bloomIndexSize = 16;
 static const unsigned c_bloomIndexLevels = 2;
 
+static const unsigned c_invalidNumber = (unsigned)-1;
+
 struct BlockDetails
 {
-	BlockDetails(): number(0), totalDifficulty(0) {}
+	BlockDetails(): number(c_invalidNumber), totalDifficulty(Invalid256) {}
 	BlockDetails(unsigned _n, u256 _tD, h256 _p, h256s _c): number(_n), totalDifficulty(_tD), parent(_p), children(_c) {}
 	BlockDetails(RLP const& _r);
 	bytes rlp() const;
 
-	bool isNull() const { return !totalDifficulty; }
+	bool isNull() const { return number == c_invalidNumber; }
 	explicit operator bool() const { return !isNull(); }
 
-	unsigned number;
-	u256 totalDifficulty;
+	unsigned number = c_invalidNumber;
+	u256 totalDifficulty = Invalid256;
 	h256 parent;
 	h256s children;
 
@@ -82,7 +83,7 @@ struct BlockReceipts
 	bytes rlp() const { RLPStream s(receipts.size()); for (TransactionReceipt const& i: receipts) i.streamRLP(s); size = s.out().size(); return s.out(); }
 
 	TransactionReceipts receipts;
-	mutable unsigned size;
+	mutable unsigned size = 0;
 };
 
 struct BlockHash

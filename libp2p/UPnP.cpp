@@ -14,15 +14,11 @@
 	You should have received a copy of the GNU General Public License
 	along with cpp-ethereum.  If not, see <http://www.gnu.org/licenses/>.
 */
-/** @file UPnP.cpp
- * @authors:
- *   Gav Wood <i@gavwood.com>
- * @date 2014
- */
+/// @file
+/// UPnP port forwarding support.
 
 #include "UPnP.h"
 
-#include <stdio.h>
 #include <string.h>
 #if ETH_MINIUPNPC
 #include <miniupnpc/miniwget.h>
@@ -30,7 +26,6 @@
 #include <miniupnpc/upnpcommands.h>
 #endif
 #include <libdevcore/Exceptions.h>
-#include <libdevcore/Common.h>
 #include <libdevcore/CommonIO.h>
 #include <libdevcore/Log.h>
 using namespace std;
@@ -52,7 +47,11 @@ UPnP::UPnP()
 	int upnperror = 0;
 	memset(m_urls.get(), 0, sizeof(struct UPNPUrls));
 	memset(m_data.get(), 0, sizeof(struct IGDdatas));
+#if MINIUPNPC_API_VERSION >= 14
+	devlist = upnpDiscover(2000, NULL/*multicast interface*/, NULL/*minissdpd socket path*/, 0/*sameport*/, 0/*ipv6*/, 2/*ttl*/, &upnperror);
+#else
 	devlist = upnpDiscover(2000, NULL/*multicast interface*/, NULL/*minissdpd socket path*/, 0/*sameport*/, 0/*ipv6*/, &upnperror);
+#endif
 	if (devlist)
 	{
 		dev = devlist;
@@ -66,15 +65,18 @@ UPnP::UPnP()
 			dev = devlist; /* defaulting to first device */
 
 		cnote << "UPnP device:" << dev->descURL << "[st:" << dev->st << "]";
-#if MINIUPNPC_API_VERSION >= 9
+#if MINIUPNPC_API_VERSION >= 16
+		int responsecode = 200;
+		descXML = (char*)miniwget(dev->descURL, &descXMLsize, 0, &responsecode);
+#elif MINIUPNPC_API_VERSION >= 9
 		descXML = (char*)miniwget(dev->descURL, &descXMLsize, 0);
 #else
 		descXML = (char*)miniwget(dev->descURL, &descXMLsize);
 #endif
 		if (descXML)
 		{
-			parserootdesc (descXML, descXMLsize, m_data.get());
-			free (descXML); descXML = 0;
+			parserootdesc(descXML, descXMLsize, m_data.get());
+			free(descXML);
 #if MINIUPNPC_API_VERSION >= 9
 			GetUPNPUrls (m_urls.get(), m_data.get(), dev->descURL, 0);
 #else
@@ -105,9 +107,8 @@ string UPnP::externalIP()
 	char addr[16];
 	if (!UPNP_GetExternalIPAddress(m_urls->controlURL, m_data->first.servicetype, addr))
 		return addr;
-	else
 #endif
-		return "0.0.0.0";
+	return "0.0.0.0";
 }
 
 int UPnP::addRedirect(char const* _addr, int _port)
@@ -129,7 +130,7 @@ int UPnP::addRedirect(char const* _addr, int _port)
 		return _port;
 
 	// Failed - now try (random external, port internal) and cycle up to 10 times.
-	srand(time(NULL));
+	srand(static_cast<unsigned int>(time(nullptr)));
 	for (unsigned i = 0; i < 10; ++i)
 	{
 		_port = rand() % (32768 - 1024) + 1024;
@@ -173,7 +174,6 @@ void UPnP::removeRedirect(int _port)
 	(void)_port;
 #if ETH_MINIUPNPC
 	char port_str[16];
-//		int t;
 	printf("TB : upnp_rem_redir (%d)\n", _port);
 	if (m_urls->controlURL[0] == '\0')
 	{

@@ -26,10 +26,9 @@
 #include <vector>
 #include <array>
 #include <exception>
-#include <iostream>
+#include <iosfwd>
 #include <iomanip>
 #include "vector_ref.h"
-#include "Common.h"
 #include "Exceptions.h"
 #include "FixedHash.h"
 
@@ -52,6 +51,8 @@ static const byte c_rlpDataImmLenCount = c_rlpListStart - c_rlpDataImmLenStart -
 static const byte c_rlpDataIndLenZero = c_rlpDataImmLenStart + c_rlpDataImmLenCount - 1;
 static const byte c_rlpListImmLenCount = 256 - c_rlpListStart - c_rlpMaxLengthBytes;
 static const byte c_rlpListIndLenZero = c_rlpListStart + c_rlpListImmLenCount - 1;
+
+template <class T> struct Converter { static T convert(RLP const&, int) { BOOST_THROW_EXCEPTION(BadCast()); } };
 
 /**
  * @brief Class for interpreting Recursive Linear-Prefix Data.
@@ -170,6 +171,8 @@ public:
 	/// @brief Iterator into end of sub-item list (valid only if we are a list).
 	iterator end() const { return iterator(*this, false); }
 
+	template <class T> inline T convert(int _flags) const;
+
 	/// Best-effort conversion operators.
 	explicit operator std::string() const { return toString(); }
 	explicit operator bytes() const { return toBytes(); }
@@ -181,77 +184,93 @@ public:
 	explicit operator u160() const { return toInt<u160>(); }
 	explicit operator u256() const { return toInt<u256>(); }
 	explicit operator bigint() const { return toInt<bigint>(); }
-	template <unsigned _N> explicit operator FixedHash<_N>() const { return toHash<FixedHash<_N>>(); }
+	template <unsigned N> explicit operator FixedHash<N>() const { return toHash<FixedHash<N>>(); }
 	template <class T, class U> explicit operator std::pair<T, U>() const { return toPair<T, U>(); }
 	template <class T> explicit operator std::vector<T>() const { return toVector<T>(); }
 	template <class T> explicit operator std::set<T>() const { return toSet<T>(); }
 	template <class T, size_t N> explicit operator std::array<T, N>() const { return toArray<T, N>(); }
 
 	/// Converts to bytearray. @returns the empty byte array if not a string.
-	bytes toBytes() const { if (!isData()) return bytes(); return bytes(payload().data(), payload().data() + length()); }
+	bytes toBytes(int _flags = LaissezFaire) const { if (!isData()) { if (_flags & ThrowOnFail) BOOST_THROW_EXCEPTION(BadCast()); else return bytes(); } return bytes(payload().data(), payload().data() + length()); }
 	/// Converts to bytearray. @returns the empty byte array if not a string.
-	bytesConstRef toBytesConstRef() const { if (!isData()) return bytesConstRef(); return payload().cropped(0, length()); }
+	bytesConstRef toBytesConstRef(int _flags = LaissezFaire) const { if (!isData()) { if (_flags & ThrowOnFail) BOOST_THROW_EXCEPTION(BadCast()); else return bytesConstRef(); } return payload().cropped(0, length()); }
 	/// Converts to string. @returns the empty string if not a string.
-	std::string toString() const { if (!isData()) return std::string(); return payload().cropped(0, length()).toString(); }
+	std::string toString(int _flags = LaissezFaire) const { if (!isData()) { if (_flags & ThrowOnFail) BOOST_THROW_EXCEPTION(BadCast()); else return std::string(); } return payload().cropped(0, length()).toString(); }
 	/// Converts to string. @throws BadCast if not a string.
-	std::string toStringStrict() const { if (!isData()) BOOST_THROW_EXCEPTION(BadCast()); return payload().cropped(0, length()).toString(); }
+	std::string toStringStrict() const { return toString(Strict); }
 
 	template <class T>
-	std::vector<T> toVector() const
+	std::vector<T> toVector(int _flags = LaissezFaire) const
 	{
 		std::vector<T> ret;
 		if (isList())
 		{
 			ret.reserve(itemCount());
 			for (auto const& i: *this)
-				ret.push_back((T)i);
-		 }
-		 return ret;
+				ret.push_back(i.convert<T>(_flags));
+		}
+		else if (_flags & ThrowOnFail)
+			BOOST_THROW_EXCEPTION(BadCast());
+		return ret;
 	}
 
 	template <class T>
-	std::set<T> toSet() const
+	std::set<T> toSet(int _flags = LaissezFaire) const
 	{
 		std::set<T> ret;
 		if (isList())
 			for (auto const& i: *this)
-				ret.insert((T)i);
+				ret.insert(i.convert<T>(_flags));
+		else if (_flags & ThrowOnFail)
+			BOOST_THROW_EXCEPTION(BadCast());
 		return ret;
 	}
 
 	template <class T>
-	std::unordered_set<T> toUnorderedSet() const
+	std::unordered_set<T> toUnorderedSet(int _flags = LaissezFaire) const
 	{
 		std::unordered_set<T> ret;
 		if (isList())
 			for (auto const& i: *this)
-				ret.insert((T)i);
+				ret.insert(i.convert<T>(_flags));
+		else if (_flags & ThrowOnFail)
+			BOOST_THROW_EXCEPTION(BadCast());
 		return ret;
 	}
 
 	template <class T, class U>
-	std::pair<T, U> toPair() const
+	std::pair<T, U> toPair(int _flags = Strict) const
 	{
-		if (itemCountStrict() != 2)
-			BOOST_THROW_EXCEPTION(BadCast());
 		std::pair<T, U> ret;
-		ret.first = (T)(*this)[0];
-		ret.second = (U)(*this)[1];
+		if (itemCountStrict() != 2)
+		{
+			if (_flags & ThrowOnFail)
+				BOOST_THROW_EXCEPTION(BadCast());
+			else
+				return ret;
+		}
+		ret.first = (*this)[0].convert<T>(_flags);
+		ret.second = (*this)[1].convert<U>(_flags);
 		return ret;
 	}
 
 	template <class T, size_t N>
-	std::array<T, N> toArray() const
+	std::array<T, N> toArray(int _flags = LaissezFaire) const
 	{
 		if (itemCountStrict() != N)
-			BOOST_THROW_EXCEPTION(BadCast());
+		{
+			if (_flags & ThrowOnFail)
+				BOOST_THROW_EXCEPTION(BadCast());
+			else
+				return std::array<T, N>();
+		}
 		std::array<T, N> ret;
 		for (size_t i = 0; i < N; ++i)
-			ret[i] = (T)operator[](i);
+			ret[i] = operator[](i).convert<T>(_flags);
 		return ret;
 	}
 
-	/// Converts to int of type given; if isString(), decodes as big-endian bytestream. @returns 0 if not an int or string.
+	/// Converts to int of type given; if isData(), decodes as big-endian bytestream. @returns 0 if not an int or data.
 	template <class _T = unsigned> _T toInt(int _flags = Strict) const
 	{
 		requireGood();
@@ -275,6 +294,14 @@ public:
 		return fromBigEndian<_T>(p);
 	}
 
+	int64_t toPositiveInt64(int _flags = Strict) const
+	{
+		int64_t i = toInt<int64_t>(_flags);
+		if ((_flags & ThrowOnFail) && i < 0)
+			BOOST_THROW_EXCEPTION(BadCast());
+		return i;
+	}
+
 	template <class _N> _N toHash(int _flags = Strict) const
 	{
 		requireGood();
@@ -295,7 +322,7 @@ public:
 	}
 
 	/// Converts to RLPs collection object. Useful if you need random access to sub items or will iterate over multiple times.
-	RLPs toList() const;
+	RLPs toList(int _flags = Strict) const;
 
 	/// @returns the data payload. Valid for all types.
 	bytesConstRef payload() const { auto l = length(); if (l > m_data.size()) BOOST_THROW_EXCEPTION(BadRLP()); return m_data.cropped(payloadOffset(), l); }
@@ -337,6 +364,25 @@ private:
 	mutable size_t m_lastEnd = 0;
 	mutable bytesConstRef m_lastItem;
 };
+
+template <> struct Converter<std::string> { static std::string convert(RLP const& _r, int _flags) { return _r.toString(_flags); } };
+template <> struct Converter<bytes> { static bytes convert(RLP const& _r, int _flags) { return _r.toBytes(_flags); } };
+template <> struct Converter<RLPs> { static RLPs convert(RLP const& _r, int _flags) { return _r.toList(_flags); } };
+template <> struct Converter<uint8_t> { static uint8_t convert(RLP const& _r, int _flags) { return _r.toInt<uint8_t>(_flags); } };
+template <> struct Converter<uint16_t> { static uint16_t convert(RLP const& _r, int _flags) { return _r.toInt<uint16_t>(_flags); } };
+template <> struct Converter<uint32_t> { static uint32_t convert(RLP const& _r, int _flags) { return _r.toInt<uint32_t>(_flags); } };
+template <> struct Converter<uint64_t> { static uint64_t convert(RLP const& _r, int _flags) { return _r.toInt<uint64_t>(_flags); } };
+template <> struct Converter<u160> { static u160 convert(RLP const& _r, int _flags) { return _r.toInt<u160>(_flags); } };
+template <> struct Converter<u256> { static u256 convert(RLP const& _r, int _flags) { return _r.toInt<u256>(_flags); } };
+template <> struct Converter<bigint> { static bigint convert(RLP const& _r, int _flags) { return _r.toInt<bigint>(_flags); } };
+template <unsigned N> struct Converter<FixedHash<N>> { static FixedHash<N> convert(RLP const& _r, int _flags) { return _r.toHash<FixedHash<N>>(_flags); } };
+template <class T, class U> struct Converter<std::pair<T, U>> { static std::pair<T, U> convert(RLP const& _r, int _flags) { return _r.toPair<T, U>(_flags); } };
+template <class T> struct Converter<std::vector<T>> { static std::vector<T> convert(RLP const& _r, int _flags) { return _r.toVector<T>(_flags); } };
+template <class T> struct Converter<std::set<T>> { static std::set<T> convert(RLP const& _r, int _flags) { return _r.toSet<T>(_flags); } };
+template <class T> struct Converter<std::unordered_set<T>> { static std::unordered_set<T> convert(RLP const& _r, int _flags) { return _r.toUnorderedSet<T>(_flags); } };
+template <class T, size_t N> struct Converter<std::array<T, N>> { static std::array<T, N> convert(RLP const& _r, int _flags) { return _r.toArray<T, N>(_flags); } };
+
+template <class T> inline T RLP::convert(int _flags) const { return Converter<T>::convert(*this, _flags); }
 
 /**
  * @brief Class for writing to an RLP bytestream.

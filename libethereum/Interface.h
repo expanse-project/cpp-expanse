@@ -25,17 +25,18 @@
 #include <libdevcore/CommonIO.h>
 #include <libdevcore/Guards.h>
 #include <libdevcrypto/Common.h>
-#include <libethcore/Ethash.h>
-#include <libethereum/GasPricer.h>
+#include <libethcore/SealEngine.h>
+#include "GasPricer.h"
 #include "LogFilter.h"
 #include "Transaction.h"
-#include "AccountDiff.h"
 #include "BlockDetails.h"
 
 namespace dev
 {
 namespace eth
 {
+
+struct SyncStatus;
 
 using TransactionHashes = h256s;
 using UncleHashes = h256s;
@@ -51,6 +52,14 @@ enum class FudgeFactor
 	Strict,
 	Lenient
 };
+
+struct GasEstimationProgress
+{
+	u256 lowerBound;
+	u256 upperBound;
+};
+
+using GasEstimationCallback = std::function<void(GasEstimationProgress const&)>;
 
 /**
  * @brief Main API hub for interfacing with Ethereum.
@@ -68,14 +77,13 @@ public:
 
 	/// Submits a new transaction.
 	/// @returns the transaction's hash.
-	virtual std::pair<h256, Address> submitTransaction(TransactionSkeleton const& _t, Secret const& _secret) = 0;
+	virtual h256 submitTransaction(TransactionSkeleton const& _t, Secret const& _secret) = 0;
 
 	/// Submits the given message-call transaction.
-	void submitTransaction(Secret const& _secret, u256 const& _value, Address const& _dest, bytes const& _data = bytes(), u256 const& _gas = 1000000, u256 const& _gasPrice = DefaultGasPrice, u256 const& _nonce = UndefinedU256);
+	void submitTransaction(Secret const& _secret, u256 const& _value, Address const& _dest, bytes const& _data = bytes(), u256 const& _gas = 1000000, u256 const& _gasPrice = DefaultGasPrice, u256 const& _nonce = Invalid256);
 
-	/// Submits a new contract-creation transaction.
-	/// @returns the new contract's address (assuming it all goes through).
-	Address submitTransaction(Secret const& _secret, u256 const& _endowment, bytes const& _init, u256 const& _gas = 1000000, u256 const& _gasPrice = DefaultGasPrice, u256 const& _nonce = UndefinedU256);
+    /// Imports the given transaction into the transaction queue
+	virtual h256 importTransaction(Transaction const& _t) = 0;
 
 	/// Blocks until all pending transactions have been processed.
 	virtual void flushTransactions() = 0;
@@ -86,18 +94,13 @@ public:
 	ExecutionResult call(Secret const& _secret, u256 _value, Address _dest, bytes const& _data, u256 _gas, u256 _gasPrice, BlockNumber _blockNumber, FudgeFactor _ff = FudgeFactor::Strict) { return call(toAddress(_secret), _value, _dest, _data, _gas, _gasPrice, _blockNumber, _ff); }
 	ExecutionResult call(Secret const& _secret, u256 _value, Address _dest, bytes const& _data, u256 _gas, u256 _gasPrice, FudgeFactor _ff = FudgeFactor::Strict) { return call(toAddress(_secret), _value, _dest, _data, _gas, _gasPrice, _ff); }
 
-	/// Does the given creation. Nothing is recorded into the state.
-	/// @returns the pair of the Address of the created contract together with its code.
-	virtual ExecutionResult create(Address const& _from, u256 _value, bytes const& _data, u256 _gas, u256 _gasPrice, BlockNumber _blockNumber, FudgeFactor _ff = FudgeFactor::Strict) = 0;
-	ExecutionResult create(Address const& _from, u256 _value, bytes const& _data = bytes(), u256 _gas = 1000000, u256 _gasPrice = DefaultGasPrice, FudgeFactor _ff = FudgeFactor::Strict) { return create(_from, _value, _data, _gas, _gasPrice, m_default, _ff); }
-	ExecutionResult create(Secret const& _secret, u256 _value, bytes const& _data, u256 _gas, u256 _gasPrice, BlockNumber _blockNumber, FudgeFactor _ff = FudgeFactor::Strict) { return create(toAddress(_secret), _value, _data, _gas, _gasPrice, _blockNumber, _ff); }
-	ExecutionResult create(Secret const& _secret, u256 _value, bytes const& _data, u256 _gas, u256 _gasPrice, FudgeFactor _ff = FudgeFactor::Strict) { return create(toAddress(_secret), _value, _data, _gas, _gasPrice, _ff); }
-
-	/// Injects the RLP-encoded transaction given by the _rlp into the transaction queue directly.
-	virtual ImportResult injectTransaction(bytes const& _rlp) = 0;
-
 	/// Injects the RLP-encoded block given by the _rlp into the block queue directly.
 	virtual ImportResult injectBlock(bytes const& _block) = 0;
+
+	/// Estimate gas usage for call/create.
+	/// @param _maxGas An upper bound value for estimation, if not provided default value of c_maxGasEstimate will be used.
+	/// @param _callback Optional callback function for progress reporting
+	virtual std::pair<u256, ExecutionResult> estimateGas(Address const& _from, u256 _value, Address _dest, bytes const& _data, int64_t _maxGas, u256 _gasPrice, BlockNumber _blockNumber, GasEstimationCallback const& _callback = GasEstimationCallback()) = 0;
 
 	// [STATE-QUERY API]
 
@@ -109,14 +112,15 @@ public:
 	u256 stateAt(Address _a, u256 _l) const { return stateAt(_a, _l, m_default); }
 	bytes codeAt(Address _a) const { return codeAt(_a, m_default); }
 	h256 codeHashAt(Address _a) const { return codeHashAt(_a, m_default); }
-	std::unordered_map<u256, u256> storageAt(Address _a) const { return storageAt(_a, m_default); }
+	std::map<h256, std::pair<u256, u256>> storageAt(Address _a) const { return storageAt(_a, m_default); }
 
 	virtual u256 balanceAt(Address _a, BlockNumber _block) const = 0;
 	virtual u256 countAt(Address _a, BlockNumber _block) const = 0;
 	virtual u256 stateAt(Address _a, u256 _l, BlockNumber _block) const = 0;
+	virtual h256 stateRootAt(Address _a, BlockNumber _block) const = 0;
 	virtual bytes codeAt(Address _a, BlockNumber _block) const = 0;
 	virtual h256 codeHashAt(Address _a, BlockNumber _block) const = 0;
-	virtual std::unordered_map<u256, u256> storageAt(Address _a, BlockNumber _block) const = 0;
+	virtual std::map<h256, std::pair<u256, u256>> storageAt(Address _a, BlockNumber _block) const = 0;
 
 	// [LOGS API]
 	
@@ -147,24 +151,29 @@ public:
 
 	virtual bool isKnown(BlockNumber _block) const = 0;
 	virtual bool isKnown(h256 const& _hash) const = 0;
-	virtual BlockInfo blockInfo(h256 _hash) const = 0;
+	virtual BlockHeader blockInfo(h256 _hash) const = 0;
 	virtual BlockDetails blockDetails(h256 _hash) const = 0;
 	virtual Transaction transaction(h256 _blockHash, unsigned _i) const = 0;
 	virtual LocalisedTransaction localisedTransaction(h256 const& _blockHash, unsigned _i) const = 0;
-	virtual BlockInfo uncle(h256 _blockHash, unsigned _i) const = 0;
+	virtual BlockHeader uncle(h256 _blockHash, unsigned _i) const = 0;
 	virtual UncleHashes uncleHashes(h256 _blockHash) const = 0;
 	virtual unsigned transactionCount(h256 _blockHash) const = 0;
+	virtual unsigned transactionCount(BlockNumber _block) const = 0;
 	virtual unsigned uncleCount(h256 _blockHash) const = 0;
 	virtual Transactions transactions(h256 _blockHash) const = 0;
+	virtual Transactions transactions(BlockNumber _block) const = 0;
 	virtual TransactionHashes transactionHashes(h256 _blockHash) const = 0;
 
-	BlockInfo blockInfo(BlockNumber _block) const { return blockInfo(hashFromNumber(_block)); }
-	BlockDetails blockDetails(BlockNumber _block) const { return blockDetails(hashFromNumber(_block)); }
+	virtual BlockHeader pendingInfo() const { return BlockHeader(); }
+	virtual BlockDetails pendingDetails() const { return BlockDetails(); }
+	/// @returns the EVMSchedule in the context of the pending block.
+	virtual EVMSchedule evmSchedule() const { return EVMSchedule(); }
+
+	BlockHeader blockInfo(BlockNumber _block) const;
+	BlockDetails blockDetails(BlockNumber _block) const;
 	Transaction transaction(BlockNumber _block, unsigned _i) const { auto p = transactions(_block); return _i < p.size() ? p[_i] : Transaction(); }
-	unsigned transactionCount(BlockNumber _block) const { if (_block == PendingBlock) { auto p = pending(); return p.size(); } return transactionCount(hashFromNumber(_block)); }
-	Transactions transactions(BlockNumber _block) const { if (_block == PendingBlock) return pending(); return transactions(hashFromNumber(_block)); }
 	TransactionHashes transactionHashes(BlockNumber _block) const { if (_block == PendingBlock) return pendingHashes(); return transactionHashes(hashFromNumber(_block)); }
-	BlockInfo uncle(BlockNumber _block, unsigned _i) const { return uncle(hashFromNumber(_block), _i); }
+	BlockHeader uncle(BlockNumber _block, unsigned _i) const { return uncle(hashFromNumber(_block), _i); }
 	UncleHashes uncleHashes(BlockNumber _block) const { return uncleHashes(hashFromNumber(_block)); }
 	unsigned uncleCount(BlockNumber _block) const { return uncleCount(hashFromNumber(_block)); }
 
@@ -173,15 +182,10 @@ public:
 	/// @returns The height of the chain.
 	virtual unsigned number() const = 0;
 
-	/// Get a map containing each of the pending transactions.
+	/// Get a map containing each of the pending transactions (transactions from accounts managed by this node which have not yet made it into a mined block)
 	/// @TODO: Remove in favour of transactions().
 	virtual Transactions pending() const = 0;
 	virtual h256s pendingHashes() const = 0;
-
-	/// Differences between transactions.
-	StateDiff diff(unsigned _txi) const { return diff(_txi, m_default); }
-	virtual StateDiff diff(unsigned _txi, h256 _block) const = 0;
-	virtual StateDiff diff(unsigned _txi, BlockNumber _block) const = 0;
 
 	/// Get a list of all active addresses.
 	/// NOTE: This only works when compiled with ETH_FATDB; otherwise will throw InterfaceNotSupported.
@@ -193,34 +197,43 @@ public:
 	// Get the gas bidding price
 	virtual u256 gasBidPrice() const = 0;
 
-	// [MINING API]:
+	/// Get some information on the block queue.
+	virtual SyncStatus syncStatus() const = 0;
 
-	/// Set the coinbase address.
-	virtual void setBeneficiary(Address _us) = 0;
-	/// Get the coinbase address.
-	virtual Address address() const = 0;
+	/// Populate the uninitialized fields in the supplied transaction with default values
+	virtual TransactionSkeleton populateTransactionWithDefaults(TransactionSkeleton const& _t) const = 0;
 
-	/// Start mining.
-	/// NOT thread-safe - call it & stopMining only from a single thread
-	virtual void startMining() = 0;
-	/// Stop mining.
+	// [SEALING API]:
+
+	/// Set the block author address.
+	virtual void setAuthor(Address const& _us) = 0;
+	/// Get the block author address.
+	virtual Address author() const = 0;
+
+	/// Start sealing.
+	/// NOT thread-safe - call it & stopSealing only from a single thread
+	virtual void startSealing() = 0;
+	/// Stop sealing.
 	/// NOT thread-safe
-	virtual void stopMining() = 0;
-	/// Are we mining now?
-	virtual bool isMining() const = 0;
-	/// Would we like to mine now?
-	virtual bool wouldMine() const = 0;
-	/// Current hash rate.
-	virtual uint64_t hashrate() const = 0;
+	virtual void stopSealing() = 0;
+	/// Would we like to be sealing now?
+	virtual bool wouldSeal() const = 0;
 
-	/// Get hash of the current block to be mined minus the nonce (the 'work hash').
-	virtual std::tuple<h256, h256, h256> getEthashWork() { BOOST_THROW_EXCEPTION(InterfaceNotSupported("Interface::getEthashWork")); }
-	/// Submit the nonce for the proof-of-work.
-	virtual bool submitEthashWork(h256 const&, h64 const&) { BOOST_THROW_EXCEPTION(InterfaceNotSupported("Interface::submitEthashWork")); }
-	/// Submit the ongoing hashrate of a particular external miner.
-	virtual void submitExternalHashrate(int, h256 const&) { BOOST_THROW_EXCEPTION(InterfaceNotSupported("Interface::submitExternalHashrate")); }
-	/// Check the progress of the mining.
-	virtual WorkingProgress miningProgress() const = 0;
+	/// Are we updating the chain (syncing or importing a new block)?
+	virtual bool isSyncing() const { return false; }
+	/// Are we syncing the chain?
+	virtual bool isMajorSyncing() const { return false; }
+
+	/// Gets the network id.
+	virtual u256 networkId() const { return 0; }
+	/// Sets the network id.
+	virtual void setNetworkId(u256 const&) {}
+
+	/// Gets the chain id
+	virtual int chainId() const { return 0; }
+
+	/// Get the seal engine.
+	virtual SealEngineFace* sealEngine() const { return nullptr; }
 
 protected:
 	int m_default = PendingBlock;

@@ -22,16 +22,17 @@
 #pragma once
 
 #include <json/json.h>
+#include <libp2p/Common.h>
 #include <libethcore/Common.h>
-#include <libethcore/BlockInfo.h>
+#include <libethcore/BlockHeader.h>
 #include <libethereum/LogFilter.h>
-#include <libwhisper/Message.h>
 
 namespace dev
 {
 
-Json::Value toJson(std::map<u256, u256> const& _storage);
+Json::Value toJson(std::map<h256, std::pair<u256, u256>> const& _storage);
 Json::Value toJson(std::unordered_map<u256, u256> const& _storage);
+Json::Value toJson(Address const& _address);
 
 namespace p2p
 {
@@ -45,19 +46,21 @@ namespace eth
 
 class Transaction;
 class LocalisedTransaction;
+class SealEngineFace;
 struct BlockDetails;
 class Interface;
 using Transactions = std::vector<Transaction>;
 using UncleHashes = h256s;
 using TransactionHashes = h256s;
 
-Json::Value toJson(BlockInfo const& _bi);
+Json::Value toJson(BlockHeader const& _bi, SealEngineFace* _face = nullptr);
 //TODO: wrap these params into one structure eg. "LocalisedTransaction"
 Json::Value toJson(Transaction const& _t, std::pair<h256, unsigned> _location, BlockNumber _blockNumber);
-Json::Value toJson(BlockInfo const& _bi, BlockDetails const& _bd, UncleHashes const& _us, Transactions const& _ts);
-Json::Value toJson(BlockInfo const& _bi, BlockDetails const& _bd, UncleHashes const& _us, TransactionHashes const& _ts);
+Json::Value toJson(BlockHeader const& _bi, BlockDetails const& _bd, UncleHashes const& _us, Transactions const& _ts, SealEngineFace* _face = nullptr);
+Json::Value toJson(BlockHeader const& _bi, BlockDetails const& _bd, UncleHashes const& _us, TransactionHashes const& _ts, SealEngineFace* _face = nullptr);
 Json::Value toJson(TransactionSkeleton const& _t);
 Json::Value toJson(Transaction const& _t);
+Json::Value toJson(Transaction const& _t, bytes const& _rlp);
 Json::Value toJson(LocalisedTransaction const& _t);
 Json::Value toJson(TransactionReceipt const& _t);
 Json::Value toJson(LocalisedTransactionReceipt const& _t);
@@ -75,29 +78,11 @@ public:
 	static Address fromJS(std::string const& _address);
 };
 
-template <class BlockInfoSub>
-Json::Value toJson(BlockHeaderPolished<BlockInfoSub> const& _bh)
-{
-	Json::Value res;
-	if (_bh)
-	{
-		res = toJson(static_cast<BlockInfo const&>(_bh));
-		for (auto const& i: _bh.jsInfo())
-			res[i.first] = i.second;
-	}
-	return res;
 }
 
-}
-
-namespace shh
+namespace rpc
 {
-
-Json::Value toJson(h256 const& _h, Envelope const& _e, Message const& _m);
-Message toMessage(Json::Value const& _json);
-Envelope toSealed(Json::Value const& _json, Message const& _m, Secret const& _from);
-std::pair<Topics, Public> toWatch(Json::Value const& _json);
-
+h256 h256fromHex(std::string const& _s);
 }
 
 template <class T>

@@ -26,20 +26,54 @@
 #include <memory>
 #include <utility>
 
-// Make sure boost/asio.hpp is included before windows.h.
-#include <boost/asio.hpp>
-
 #include <libdevcore/RLP.h>
 #include <libdevcore/Guards.h>
 #include <libethcore/Common.h>
 #include <libp2p/Capability.h>
 #include "CommonNet.h"
-#include "DownloadMan.h"
 
 namespace dev
 {
 namespace eth
 {
+
+class EthereumPeerObserverFace
+{
+public:
+	virtual ~EthereumPeerObserverFace() {}
+
+	virtual void onPeerStatus(std::shared_ptr<EthereumPeer> _peer) = 0;
+
+	virtual void onPeerTransactions(std::shared_ptr<EthereumPeer> _peer, RLP const& _r) = 0;
+
+	virtual void onPeerBlockHeaders(std::shared_ptr<EthereumPeer> _peer, RLP const& _headers) = 0;
+
+	virtual void onPeerBlockBodies(std::shared_ptr<EthereumPeer> _peer, RLP const& _r) = 0;
+
+	virtual void onPeerNewHashes(std::shared_ptr<EthereumPeer> _peer, std::vector<std::pair<h256, u256>> const& _hashes) = 0;
+
+	virtual void onPeerNewBlock(std::shared_ptr<EthereumPeer> _peer, RLP const& _r) = 0;
+
+	virtual void onPeerNodeData(std::shared_ptr<EthereumPeer> _peer, RLP const& _r) = 0;
+
+	virtual void onPeerReceipts(std::shared_ptr<EthereumPeer> _peer, RLP const& _r) = 0;
+
+	virtual void onPeerAborting() = 0;
+};
+
+class EthereumHostDataFace
+{
+public:
+	virtual ~EthereumHostDataFace() {}
+
+	virtual std::pair<bytes, unsigned> blockHeaders(RLP const& _blockId, unsigned _maxHeaders, u256 _skip, bool _reverse) const = 0;
+
+	virtual std::pair<bytes, unsigned> blockBodies(RLP const& _blockHashes) const = 0;
+
+	virtual strings nodeData(RLP const& _dataHashes) const = 0;
+
+	virtual std::pair<bytes, unsigned> receipts(RLP const& _blockHashes) const = 0;
+};
 
 /**
  * @brief The EthereumPeer class
@@ -50,12 +84,10 @@ class EthereumPeer: public p2p::Capability
 {
 	friend class EthereumHost; //TODO: remove this
 	friend class BlockChainSync; //TODO: remove this
-	friend class PV60Sync; //TODO: remove this
-	friend class PV61Sync; //TODO: remove this
 
 public:
 	/// Basic constructor.
-	EthereumPeer(std::shared_ptr<p2p::Session> _s, p2p::HostCapabilityFace* _h, unsigned _i, p2p::CapDesc const& _cap);
+	EthereumPeer(std::shared_ptr<p2p::SessionFace> _s, p2p::HostCapabilityFace* _h, unsigned _i, p2p::CapDesc const& _cap);
 
 	/// Basic destructor.
 	virtual ~EthereumPeer();
@@ -69,29 +101,34 @@ public:
 	/// How many message types do we have?
 	static unsigned messageCount() { return PacketCount; }
 
-	/// What is the ethereum subprotocol host object.
-	EthereumHost* host() const;
+	void init(unsigned _hostProtocolVersion, u256 _hostNetworkId, u256 _chainTotalDifficulty, h256 _chainCurrentHash, h256 _chainGenesisHash, std::shared_ptr<EthereumHostDataFace> _hostData, std::shared_ptr<EthereumPeerObserverFace> _observer);
+
+	p2p::NodeID id() const { return session()->id(); }
 
 	/// Abort sync and reset fetch
 	void setIdle();
 
-	/// Request hashes by number. v61+ protocol version only
-	void requestHashes(u256 _number, unsigned _count);
-
 	/// Request hashes for given parent hash.
-	void requestHashes(h256 const& _lastHash);
-
-	/// Request blocks. Uses block download manager.
-	void requestBlocks();
+	void requestBlockHeaders(h256 const& _startHash, unsigned _count, unsigned _skip, bool _reverse);
+	void requestBlockHeaders(unsigned _startNumber, unsigned _count, unsigned _skip, bool _reverse);
 
 	/// Request specified blocks from peer.
-	void requestBlocks(h256s const& _blocks);
+	void requestBlockBodies(h256s const& _blocks);
+
+	/// Request values for specified keys from peer.
+	void requestNodeData(h256s const& _hashes);
+
+	/// Request receipts for specified blocks from peer.
+	void requestReceipts(h256s const& _blocks);
 
 	/// Check if this node is rude.
 	bool isRude() const;
 
 	/// Set that it's a rude node.
 	void setRude();
+
+	/// Abort the sync operation.
+	void abortSync();
 
 private:
 	using p2p::Capability::sealAndSend;
@@ -103,13 +140,13 @@ private:
 	virtual bool interpret(unsigned _id, RLP const& _r);
 
 	/// Request status. Called from constructor
-	void requestStatus();
-
-	/// Abort the sync operation.
-	void abortSync();
+	void requestStatus(u256 _hostNetworkId, u256 _chainTotalDifficulty, h256 _chainCurrentHash, h256 _chainGenesisHash);
 
 	/// Clear all known transactions.
 	void clearKnownTransactions() { std::lock_guard<std::mutex> l(x_knownTransactions); m_knownTransactions.clear(); }
+
+	// Request of type _packetType with _hashes as input parameters
+	void requestByHashes(h256s const& _hashes, Asking _asking, SubprotocolPacketType _packetType);
 
 	/// Update our asking state.
 	void setAsking(Asking _g);
@@ -125,6 +162,8 @@ private:
 
 	/// Runs period checks to check up on the peer.
 	void tick();
+
+	unsigned m_hostProtocolVersion = 0;
 
 	/// Peer's protocol version.
 	unsigned m_protocolVersion;
@@ -142,16 +181,7 @@ private:
 	u256 m_totalDifficulty;					///< Peer's latest block's total difficulty.
 	h256 m_genesisHash;						///< Peer's genesis hash
 
-	/// This is built as we ask for hashes. Once no more hashes are given, we present this to the
-	/// host who initialises the DownloadMan and m_sub becomes active for us to begin asking for blocks.
-	unsigned m_expectedHashes = 0;			///< Estimated upper bound of hashes to expect from this peer.
-	u256 m_syncHashNumber = 0;				///< Number of latest hash we sync to (PV61+)
-	h256 m_syncHash;						///< Latest hash we sync to (PV60)
-
-	/// Once we're asking for blocks, this becomes in use.
-	DownloadSub m_sub;
-
-	u256 m_peerCapabilityVersion;			///< Protocol version this peer supports received as capability
+	u256 const m_peerCapabilityVersion;			///< Protocol version this peer supports received as capability
 	/// Have we received a GetTransactions packet that we haven't yet answered?
 	bool m_requireTransactions = false;
 
@@ -159,6 +189,15 @@ private:
 	h256Hash m_knownBlocks;					///< Blocks that the peer already knows about (that don't need to be sent to them).
 	Mutex x_knownTransactions;
 	h256Hash m_knownTransactions;			///< Transactions that the peer already knows of.
+	unsigned m_unknownNewBlocks = 0;		///< Number of unknown NewBlocks received from this peer
+	unsigned m_lastAskedHeaders = 0;		///< Number of hashes asked
+
+	std::weak_ptr<EthereumPeerObserverFace> m_observer;
+	std::weak_ptr<EthereumHostDataFace> m_hostData;
+
+    Logger m_logger{createLogger(VerbosityDebug, "peer")};
+    /// Logger for messages about impolite behaivour of peers.
+    Logger m_loggerImpolite{createLogger(VerbosityDebug, "impolite")};
 };
 
 }

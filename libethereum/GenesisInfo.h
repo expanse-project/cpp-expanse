@@ -21,13 +21,17 @@
 
 #pragma once
 
+#include <libdevcore/Common.h>
+
 #include <string>
 
-namespace dev {
-namespace eth {
+namespace dev
+{
+namespace eth
+{
 
-extern std::string const c_genesisInfoOlympic;
-extern std::string const c_genesisInfoFrontier;
+extern std::string const c_genesisInfoTestBasicAuthority;
+extern dev::Addresses childDaos();
 
 }
 }

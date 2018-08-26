@@ -57,6 +57,8 @@ TransactionException dev::eth::toTransactionException(Exception const& _e)
 		return TransactionException::NotEnoughCash;
 	if (!!dynamic_cast<BlockGasLimitReached const*>(&_e))
 		return TransactionException::BlockGasLimitReached;
+	if (!!dynamic_cast<AddressAlreadyUsed const*>(&_e))
+		return TransactionException::AddressAlreadyUsed;
 	// VM execution exceptions
 	if (!!dynamic_cast<BadInstruction const*>(&_e))
 		return TransactionException::BadInstruction;
@@ -97,13 +99,4 @@ std::ostream& dev::eth::operator<<(std::ostream& _out, TransactionException cons
 Transaction::Transaction(bytesConstRef _rlpData, CheckTransaction _checkSig):
 	TransactionBase(_rlpData, _checkSig)
 {
-	if (_checkSig >= CheckTransaction::Cheap && !checkPayment())
-		BOOST_THROW_EXCEPTION(OutOfGasIntrinsic() << RequirementError(gasRequired(), (bigint)gas()));
-}
-
-bigint Transaction::gasRequired() const
-{
-	if (!m_gasRequired)
-		m_gasRequired = Transaction::gasRequired(m_data);
-	return m_gasRequired;
 }

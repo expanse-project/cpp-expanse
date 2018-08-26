@@ -43,7 +43,7 @@ void BasicGasPricer::update(BlockChain const& _bc)
 	// make gasPrice versus gasUsed distribution for the last 1000 blocks
 	while (c < 1000 && p)
 	{
-		BlockInfo bi = _bc.info(p);
+		BlockHeader bi = _bc.info(p);
 		if (bi.transactionsRoot() != EmptyTrie)
 		{
 			auto bb = _bc.block(p);
@@ -53,7 +53,7 @@ void BasicGasPricer::update(BlockChain const& _bc)
 			for (auto const& tr: r[1])
 			{
 				Transaction tx(tr.data(), CheckTransaction::None);
-				u256 gu = brs.receipts[i].gasUsed();
+				u256 gu = brs.receipts[i].cumulativeGasUsed();
 				dist[tx.gasPrice()] += gu;
 				total += gu;
 				i++;

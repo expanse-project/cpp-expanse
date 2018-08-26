@@ -28,16 +28,20 @@ using namespace std;
 namespace dev
 {
 
-bytes jsToBytes(string const& _s)
+bytes jsToBytes(string const& _s, OnFailed _f)
 {
-	if (_s.substr(0, 2) == "0x")
-		// Hex
-		return fromHex(_s.substr(2));
-	else if (_s.find_first_not_of("0123456789") == string::npos)
-		// Decimal
-		return toCompactBigEndian(bigint(_s));
-	else
-		return bytes();
+	try
+	{
+		return fromHex(_s, WhenError::Throw);
+	}
+	catch (...)
+	{
+		if (_f == OnFailed::InterpretRaw)
+			return asBytes(_s);
+		else if (_f == OnFailed::Throw)
+			throw invalid_argument("Cannot intepret '" + _s + "' as bytes; must be 0x-prefixed hex or decimal.");
+	}
+	return bytes();
 }
 
 bytes padded(bytes _b, unsigned _l)
@@ -74,7 +78,7 @@ bytes unpadLeft(bytes _b)
 	return _b;
 }
 
-string fromRaw(h256 _n, unsigned* _inc)
+string fromRaw(h256 _n)
 {
 	if (_n)
 	{
@@ -83,14 +87,7 @@ string fromRaw(h256 _n, unsigned* _inc)
 		if (!l)
 			return "";
 		if (l != string::npos)
-		{
-			auto p = s.find_first_not_of('\0', l);
-			if (!(p == string::npos || (_inc && p == 31)))
-				return "";
-			if (_inc)
-				*_inc = (byte)s[31];
 			s.resize(l);
-		}
 		for (auto i: s)
 			if (i < 32)
 				return "";

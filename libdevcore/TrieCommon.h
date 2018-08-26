@@ -21,11 +21,12 @@
 
 #pragma once
 
-#include <libdevcore/Common.h>
-#include <libdevcore/RLP.h>
+#include "Common.h"
+#include "RLP.h"
 
 namespace dev
 {
+extern const h256 EmptyTrie;
 
 inline byte nibble(bytesConstRef _data, unsigned _i)
 {

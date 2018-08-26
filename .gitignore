@@ -34,8 +34,10 @@ build_xc
 
 # build system
 build.*/
+/deps/
 extdep/install
 extdep/download
+/cmake-build-*/
 
 *.pyc
 
@@ -66,7 +68,13 @@ project.pbxproj
 
 # JetBrains stuff
 .idea/
+bin/
+
+# Visual Studio Code
+browse.VC.db
 
 doc/html
 *.autosave
 node_modules/
+
+dependency_graph.svg

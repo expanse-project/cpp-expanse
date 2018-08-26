@@ -21,11 +21,11 @@
 
 #pragma once
 
+#include <libethcore/Common.h>
+#include <libethcore/TransactionBase.h>
+#include <libethcore/ChainOperationParams.h>
 #include <libdevcore/RLP.h>
 #include <libdevcore/SHA3.h>
-#include <libethcore/Common.h>
-#include <libethcore/Transaction.h>
-#include <libevmcore/Params.h>
 
 namespace dev
 {
@@ -48,7 +48,10 @@ enum class TransactionException
 	BadJumpDestination,
 	OutOfGas,				///< Ran out of gas executing code of the transaction.
 	OutOfStack,				///< Ran out of stack executing code of the transaction.
-	StackUnderflow
+	StackUnderflow,
+	RevertInstruction,
+	InvalidZeroSignatureFormat,
+	AddressAlreadyUsed
 };
 
 enum class CodeDeposit
@@ -99,12 +102,12 @@ public:
 	{}
 
 	/// Constructs an unsigned message-call transaction.
-	Transaction(u256 const& _value, u256 const& _gasPrice, u256 const& _gas, Address const& _dest, bytes const& _data, u256 const& _nonce = UndefinedU256):
+	Transaction(u256 const& _value, u256 const& _gasPrice, u256 const& _gas, Address const& _dest, bytes const& _data, u256 const& _nonce = Invalid256):
 		TransactionBase(_value, _gasPrice, _gas, _dest, _data, _nonce)
 	{}
 
 	/// Constructs an unsigned contract-creation transaction.
-	Transaction(u256 const& _value, u256 const& _gasPrice, u256 const& _gas, bytes const& _data, u256 const& _nonce = UndefinedU256):
+	Transaction(u256 const& _value, u256 const& _gasPrice, u256 const& _gas, bytes const& _data, u256 const& _nonce = Invalid256):
 		TransactionBase(_value, _gasPrice, _gas, _data, _nonce)
 	{}
 
@@ -113,18 +116,6 @@ public:
 
 	/// Constructs a transaction from the given RLP.
 	explicit Transaction(bytes const& _rlp, CheckTransaction _checkSig): Transaction(&_rlp, _checkSig) {}
-
-	/// @returns true if the transaction contains enough gas for the basic payment.
-	bool checkPayment() const { return m_gas >= gasRequired(); }
-
-	/// @returns the gas required to run this transaction.
-	bigint gasRequired() const;
-
-	/// Get the fee associated for a transaction with the given data.
-	template <class T> static bigint gasRequired(T const& _data, u256 _gas = 0) { bigint ret = c_txGas + _gas; for (auto i: _data) ret += i ? c_txDataNonZeroGas : c_txDataZeroGas; return ret; }
-
-private:
-	mutable bigint m_gasRequired = 0;	///< Memoised amount required for the transaction to run.
 };
 
 /// Nice name for vector of Transaction.

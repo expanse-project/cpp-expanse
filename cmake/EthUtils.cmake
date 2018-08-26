@@ -13,7 +13,7 @@ macro(replace_if_different SOURCE DST)
 		file(WRITE "${DST}" "")
 	endif()
 
-	execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOURCE}" "${DST}" RESULT_VARIABLE DIFFERENT)
+	execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOURCE}" "${DST}" RESULT_VARIABLE DIFFERENT OUTPUT_QUIET ERROR_QUIET)
 
 	if (DIFFERENT)
 		execute_process(COMMAND ${CMAKE_COMMAND} -E rename "${SOURCE}" "${DST}")
@@ -62,20 +62,21 @@ macro(eth_add_test NAME)
 
 endmacro()
 
-# Creates C resources file from files
-function(eth_add_resources RESOURCE_FILE OUT_FILE)
-	include("${RESOURCE_FILE}")
-	set(OUTPUT  "${ETH_RESOURCE_LOCATION}/${ETH_RESOURCE_NAME}.hpp")
-	set(${OUT_FILE} "${OUTPUT}"  PARENT_SCOPE)
+# In Windows split repositories build we need to be checking whether or not
+# Debug/Release or both versions were built for the config phase to run smoothly
+macro(eth_check_library_link L)
+	if (${${L}_LIBRARY} AND ${${L}_LIBRARY} EQUAL "${L}_LIBRARY-NOTFOUND")
+		unset(${${L}_LIBRARY})
+	endif()
+	if (${${L}_LIBRARY_DEBUG} AND ${${L}_LIBRARY_DEBUG} EQUAL "${L}_LIBRARY_DEBUG-NOTFOUND")
+		unset(${${L}_LIBRARY_DEBUG})
+	endif()
+	if (${${L}_LIBRARY} AND ${${L}_LIBRARY_DEBUG})
+		set(${L}_LIBRARIES optimized ${${L}_LIBRARY} debug ${${L}_LIBRARY_DEBUG})
+	elseif (${${L}_LIBRARY})
+		set(${L}_LIBRARIES ${${L}_LIBRARY})
+	elseif (${${L}_LIBRARY_DEBUG})
+		set(${L}_LIBRARIES ${${L}_LIBRARY_DEBUG})
+	endif()
+endmacro()
 
-	set(filenames "${RESOURCE_FILE}")
-	list(APPEND filenames "${ETH_SCRIPTS_DIR}/resources.cmake")
-	foreach(resource ${ETH_RESOURCES})
-		list(APPEND filenames "${${resource}}")
-	endforeach(resource)
-
-	add_custom_command(OUTPUT ${OUTPUT}
-		COMMAND ${CMAKE_COMMAND} -DETH_RES_FILE="${RESOURCE_FILE}" -P "${ETH_SCRIPTS_DIR}/resources.cmake"
-		DEPENDS ${filenames}
-	)
-endfunction()

@@ -26,21 +26,32 @@ using namespace dev;
 bytes dev::RLPNull = rlp("");
 bytes dev::RLPEmptyList = rlpList();
 
+namespace {
+
+errinfo_comment constructRLPSizeErrorInfo(size_t _actualSize, size_t _dataSize)
+{
+    std::stringstream s;
+    s << "Actual size: " << _actualSize << ", data size: " << _dataSize;
+    return errinfo_comment(s.str());
+}
+
+}
+
 RLP::RLP(bytesConstRef _d, Strictness _s):
 	m_data(_d)
 {
 	if ((_s & FailIfTooBig) && actualSize() < _d.size())
 	{
 		if (_s & ThrowOnFail)
-			BOOST_THROW_EXCEPTION(OversizeRLP());
-		else
+            BOOST_THROW_EXCEPTION(OversizeRLP() << constructRLPSizeErrorInfo(actualSize(), _d.size()));
+        else
 			m_data.reset();
 	}
 	if ((_s & FailIfTooSmall) && actualSize() > _d.size())
 	{
 		if (_s & ThrowOnFail)
-			BOOST_THROW_EXCEPTION(UndersizeRLP());
-		else
+            BOOST_THROW_EXCEPTION(UndersizeRLP() << constructRLPSizeErrorInfo(actualSize(), _d.size()));
+        else
 			m_data.reset();
 	}
 }
@@ -90,11 +101,16 @@ RLP RLP::operator[](size_t _i) const
 	return RLP(m_lastItem, ThrowOnFail | FailIfTooSmall);
 }
 
-RLPs RLP::toList() const
+RLPs RLP::toList(int _flags) const
 {
 	RLPs ret;
 	if (!isList())
-		return ret;
+	{
+		if (_flags & ThrowOnFail)
+			BOOST_THROW_EXCEPTION(BadCast());
+		else
+			return ret;
+	}
 	for (auto const& i: *this)
 		ret.push_back(i);
 	return ret;
@@ -343,9 +359,11 @@ void RLPStream::pushCount(size_t _count, byte _base)
 	pushInt(_count, br);
 }
 
-std::ostream& dev::operator<<(std::ostream& _out, RLP const& _d)
+static void streamOut(std::ostream& _out, dev::RLP const& _d, unsigned _depth = 0)
 {
-	if (_d.isNull())
+	if (_depth > 64)
+		_out << "<max-depth-reached>";
+	else if (_d.isNull())
 		_out << "null";
 	else if (_d.isInt())
 		_out << std::showbase << std::hex << std::nouppercase << _d.toInt<bigint>(RLP::LaissezFaire) << dec;
@@ -356,9 +374,16 @@ std::ostream& dev::operator<<(std::ostream& _out, RLP const& _d)
 		_out << "[";
 		int j = 0;
 		for (auto i: _d)
-			_out << (j++ ? ", " : " ") << i;
+		{
+			_out << (j++ ? ", " : " ");
+			streamOut(_out, i, _depth + 1);
+		}
 		_out << " ]";
 	}
+}
 
+std::ostream& dev::operator<<(std::ostream& _out, RLP const& _d)
+{
+	streamOut(_out, _d);
 	return _out;
 }

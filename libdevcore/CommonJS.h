@@ -30,10 +30,14 @@
 
 namespace dev
 {
+inline std::string toJS(byte _b)
+{
+    return "0x" + std::to_string(_b);
+}
 
 template <unsigned S> std::string toJS(FixedHash<S> const& _h)
 {
-	return "0x" + toHex(_h.ref());
+	return toHexPrefixed(_h.ref());
 }
 
 template <unsigned N> std::string toJS(boost::multiprecision::number<boost::multiprecision::cpp_int_backend<N, N, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>> const& _n)
@@ -48,7 +52,7 @@ inline std::string toJS(bytes const& _n, std::size_t _padding = 0)
 {
 	bytes n = _n;
 	n.resize(std::max<unsigned>(n.size(), _padding));
-	return "0x" + toHex(n);
+	return toHexPrefixed(n);
 }
 
 template<unsigned T> std::string toJS(SecureFixedHash<T> const& _i)
@@ -65,18 +69,21 @@ template<typename T> std::string toJS(T const& _i)
 	return stream.str();
 }
 
-/// Convert string to byte array. Input parameters can be hex or dec. Returns empty array if invalid input e.g neither dec or hex.
-bytes jsToBytes(std::string const& _s);
-/// Add '0' on the head of @a _b until @a _l.
+enum class OnFailed { InterpretRaw, Empty, Throw };
+
+/// Convert string to byte array. Input parameter is hex, optionally prefixed by "0x".
+/// Returns empty array if invalid input.
+bytes jsToBytes(std::string const& _s, OnFailed _f = OnFailed::Empty);
+/// Add '0' on, or remove items from, the front of @a _b until it is of length @a _l.
 bytes padded(bytes _b, unsigned _l);
-/// Add '0' on the queue of @a _b until @a _l.
+/// Add '0' on, or remove items from,  the back of @a _b until it is of length @a _l.
 bytes paddedRight(bytes _b, unsigned _l);
 /// Removing all trailing '0'. Returns empty array if input contains only '0' char.
 bytes unpadded(bytes _s);
 /// Remove all 0 byte on the head of @a _s.
 bytes unpadLeft(bytes _s);
-/// Convert h256 into user-readable string (by directly using std::string constructor).
-std::string fromRaw(h256 _n, unsigned* _inc = nullptr);
+/// Convert h256 into user-readable string (by directly using std::string constructor). If it can't be interpreted as an ASCII string, empty string is returned.
+std::string fromRaw(h256 _n);
 
 template <unsigned N> FixedHash<N> jsToFixed(std::string const& _s)
 {
@@ -89,11 +96,6 @@ template <unsigned N> FixedHash<N> jsToFixed(std::string const& _s)
 	else
 		// Binary
 		return FixedHash<N>();	// FAIL
-}
-
-inline std::string jsToFixed(double _s)
-{
-	return toJS(u256(_s * (double)(u256(1) << 128)));
 }
 
 template <unsigned N> boost::multiprecision::number<boost::multiprecision::cpp_int_backend<N * 8, N * 8, boost::multiprecision::unsigned_magnitude, boost::multiprecision::unchecked, void>> jsToInt(std::string const& _s)
@@ -111,11 +113,14 @@ template <unsigned N> boost::multiprecision::number<boost::multiprecision::cpp_i
 
 inline u256 jsToU256(std::string const& _s) { return jsToInt<32>(_s); }
 
+/// Convert a string representation of a number to an int
+/// String can be a normal decimal number, or a hex prefixed by 0x or 0X, or an octal if prefixed by 0
+/// Returns 0 in case of failure
 inline int jsToInt(std::string const& _s)
 {
-	if (_s.size() > 2 && _s.substr(0, 2).compare("0x") == 0)
-		return std::stoi(_s, nullptr, 16);
-	return std::stoi(_s, nullptr, 10);
+	int ret = 0;
+	DEV_IGNORE_EXCEPTIONS(ret = std::stoi(_s, nullptr, 0));
+	return ret;
 }
 
 inline std::string jsToDecimal(std::string const& _s)

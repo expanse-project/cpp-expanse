@@ -23,14 +23,20 @@
 
 #pragma once
 
-#include <string>
-#include <functional>
+#include <libdevcore/Address.h>
 #include <libdevcore/Common.h>
+#include <libdevcore/Exceptions.h>
 #include <libdevcore/FixedHash.h>
-#include <libdevcrypto/Common.h>
+
+#include <functional>
+#include <string>
 
 namespace dev
 {
+
+class RLP;
+class RLPStream;
+
 namespace eth
 {
 
@@ -43,16 +49,10 @@ extern const unsigned c_minorProtocolVersion;
 /// Current database version.
 extern const unsigned c_databaseVersion;
 
-/// The network id.
-enum class Network
-{
-	Olympic = 0,
-	Frontier = 1,
-	Turbo = 2
-};
-extern Network c_network;
-
-Network resetNetwork(Network _n);
+/// Address of the special contract for block hash storage defined in EIP96
+extern const Address c_blockhashContractAddress;
+/// Code of the special contract for block hash storage defined in EIP96
+extern const bytes c_blockhashContractCode;
 
 /// User-friendly string representation of the amount _b in wei.
 std::string formatBalance(bigint const& _b);
@@ -71,16 +71,6 @@ using LogBloom = h2048;
 /// Many log blooms.
 using LogBlooms = std::vector<LogBloom>;
 
-template <size_t n> inline u256 exp10()
-{
-	return exp10<n - 1>() * u256(10);
-}
-
-template <> inline u256 exp10<0>()
-{
-	return u256(1);
-}
-
 // The various denominations; here for ease of use where needed within code.
 static const u256 ether = exp10<18>();
 static const u256 finney = exp10<15>();
@@ -98,11 +88,19 @@ static const h256 LatestBlockHash = h256(2);
 static const h256 EarliestBlockHash = h256(1);
 static const h256 PendingBlockHash = h256(0);
 
+static const u256 DefaultBlockGasLimit = 4712388;
 
 enum class RelativeBlock: BlockNumber
 {
 	Latest = LatestBlock,
 	Pending = PendingBlock
+};
+
+enum class BlockPolarity
+{
+	Unknown,
+	Dead,
+	Live
 };
 
 class Transaction;
@@ -124,7 +122,8 @@ enum class ImportResult
 	AlreadyKnown,
 	Malformed,
 	OverbidGasPrice,
-	BadChain
+	BadChain,
+	ZeroSignature
 };
 
 struct ImportRequirements
@@ -139,6 +138,7 @@ struct ImportRequirements
 		TransactionSignatures = 32, ///< Check the basic structure of the transactions.
 		Parent = 64, ///< Check parent block header.
 		UncleParent = 128, ///< Check uncle parent block header.
+		PostGenesis = 256, ///< Require block to be non-genesis.
 		CheckUncles = UncleBasic | UncleSeals, ///< Check uncle seals.
 		CheckTransactions = TransactionBasic | TransactionSignatures, ///< Check transaction signatures.
 		OutOfOrderChecks = ValidSeal | CheckUncles | CheckTransactions, ///< Do all checks that can be done independently of prior blocks having been imported.
@@ -206,10 +206,13 @@ struct TransactionSkeleton
 	Address to;
 	u256 value;
 	bytes data;
-	u256 nonce = UndefinedU256;
-	u256 gas = UndefinedU256;
-	u256 gasPrice = UndefinedU256;
+	u256 nonce = Invalid256;
+	u256 gas = Invalid256;
+	u256 gasPrice = Invalid256;
+
+	std::string userReadable(bool _toProxy, std::function<std::pair<bool, std::string>(TransactionSkeleton const&)> const& _getNatSpec, std::function<std::string(Address const&)> const& _formatAddress) const;
 };
+
 
 void badBlock(bytesConstRef _header, std::string const& _err);
 inline void badBlock(bytes const& _header, std::string const& _err) { badBlock(&_header, _err); }
@@ -223,7 +226,14 @@ struct WorkingProgress
 //	MiningProgress& operator+=(MiningProgress const& _mp) { hashes += _mp.hashes; ms = std::max(ms, _mp.ms); return *this; }
 	uint64_t hashes = 0;		///< Total number of hashes computed.
 	uint64_t ms = 0;			///< Total number of milliseconds of mining thus far.
-	uint64_t rate() const { return ms == 0 ? 0 : hashes * 1000 / ms; }
+	u256 rate() const { return ms == 0 ? 0 : hashes * 1000 / ms; }
+};
+
+/// Import transaction policy
+enum class IfDropped
+{
+	Ignore, ///< Don't import transaction that was previously dropped.
+	Retry 	///< Import transaction even if it was dropped before.
 };
 
 }

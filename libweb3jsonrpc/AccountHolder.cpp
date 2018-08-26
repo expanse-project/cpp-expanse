@@ -23,7 +23,6 @@
 
 #include "AccountHolder.h"
 #include <random>
-#include <ctime>
 #include <libdevcore/Guards.h>
 #include <libethereum/Client.h>
 #include <libethcore/KeyManager.h>
@@ -34,7 +33,7 @@ using namespace dev;
 using namespace dev::eth;
 
 vector<TransactionSkeleton> g_emptyQueue;
-static std::mt19937 g_randomNumberGenerator(time(0));
+static std::mt19937 g_randomNumberGenerator(utcTime());
 static Mutex x_rngMutex;
 
 vector<Address> AccountHolder::allAccounts() const
@@ -106,22 +105,86 @@ AddressHash SimpleAccountHolder::realAccounts() const
 	return m_keyManager.accountsHash();
 }
 
-h256 SimpleAccountHolder::authenticate(dev::eth::TransactionSkeleton const& _t)
+pair<bool, Secret> SimpleAccountHolder::authenticate(dev::eth::TransactionSkeleton const& _t)
 {
+	pair<bool, Secret> ret;
+	bool locked = true;
+	if (m_unlockedAccounts.count(_t.from))
+	{
+		chrono::steady_clock::time_point start = m_unlockedAccounts[_t.from].first;
+		chrono::seconds duration(m_unlockedAccounts[_t.from].second);
+		auto end = start + duration;
+		if (start < end && chrono::steady_clock::now() < end)
+			locked = false;
+	}
+	
+	if (locked && m_getAuthorisation)
+	{
+		if (m_getAuthorisation(_t, isProxyAccount(_t.from)))
+			locked = false;
+		else
+			BOOST_THROW_EXCEPTION(TransactionRefused());
+	}
+	if (locked)
+		BOOST_THROW_EXCEPTION(AccountLocked());
 	if (isRealAccount(_t.from))
-		return m_client()->submitTransaction(_t, m_keyManager.secret(_t.from, [&](){ return m_getPassword(_t.from); })).first;
+	{
+		if (Secret s = m_keyManager.secret(_t.from, [&](){ return m_getPassword(_t.from); }))
+			ret = make_pair(false, s);
+		else
+			BOOST_THROW_EXCEPTION(AccountLocked());
+	}
 	else if (isProxyAccount(_t.from))
-		queueTransaction(_t);
-	return h256();
+		ret.first = true;
+	else
+		BOOST_THROW_EXCEPTION(UnknownAccount());
+	return ret;
 }
 
-h256 FixedAccountHolder::authenticate(dev::eth::TransactionSkeleton const& _t)
+bool SimpleAccountHolder::unlockAccount(Address const& _account, string const& _password, unsigned _duration)
 {
+	if (!m_keyManager.hasAccount(_account))
+		return false;
+
+	if (_duration == 0)
+		// Lock it even if the password is wrong.
+		m_unlockedAccounts[_account].second = 0;
+
+	m_keyManager.notePassword(_password);
+
+	try
+	{
+		if (!m_keyManager.secret(_account, [&] { return _password; }, false))
+			return false;
+	}
+	catch (PasswordUnknown const&)
+	{
+		return false;
+	}
+	m_unlockedAccounts[_account] = make_pair(chrono::steady_clock::now(), _duration);
+
+	return true;
+}
+
+pair<bool, Secret> FixedAccountHolder::authenticate(dev::eth::TransactionSkeleton const& _t)
+{
+	pair<bool, Secret> ret;
 	if (isRealAccount(_t.from))
-		return m_client()->submitTransaction(_t, m_accounts[_t.from]).first;
+	{
+		if (m_accounts.count(_t.from))
+		{
+			ret = make_pair(false, m_accounts[_t.from]);
+		}
+		else
+			BOOST_THROW_EXCEPTION(AccountLocked());
+	}
 	else if (isProxyAccount(_t.from))
-		queueTransaction(_t);
-	return h256();
+	{
+		ret.first = true;
+	}
+	else
+		BOOST_THROW_EXCEPTION(UnknownAccount());
+	return ret;
 }
 
 

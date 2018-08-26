@@ -1,32 +1,34 @@
-cmake_policy(SET CMP0015 NEW)
-set(CMAKE_AUTOMOC OFF)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSTATICLIB")
+set(sources
+    EVMC.cpp EVMC.h
+    ExtVMFace.cpp ExtVMFace.h
+    Instruction.cpp Instruction.h
+    LegacyVM.cpp LegacyVM.h
+    LegacyVMConfig.h
+    LegacyVMCalls.cpp
+    LegacyVMOpt.cpp
+    VMFace.h
+    VMFactory.cpp VMFactory.h
+)
 
-aux_source_directory(. SRC_LIST)
+add_library(evm ${sources})
 
-# we may not use it in libevm, but one of our dependecies is including boost in header file
-# and windows is failing to build without that
-include_directories(BEFORE ..)
-include_directories(${Boost_INCLUDE_DIRS})
-if (EVMJIT)
-	include_directories(../evmjit/include)
+target_link_libraries(
+    evm
+    PUBLIC ethcore devcore evmc::evmc
+    PRIVATE aleth-interpreter aleth-buildinfo jsoncpp_lib_static Boost::program_options ${CMAKE_DL_LIBS}
+)
+
+if(EVM_OPTIMIZE)
+    target_compile_definitions(evm PRIVATE EVM_OPTIMIZE)
 endif()
 
-set(EXECUTABLE evm)
-
-file(GLOB HEADERS "*.h")
-
-add_library(${EXECUTABLE} ${SRC_LIST} ${HEADERS})
-
-target_link_libraries(${EXECUTABLE} ethcore)
-target_link_libraries(${EXECUTABLE} devcrypto)
-target_link_libraries(${EXECUTABLE} evmcore)
-target_link_libraries(${EXECUTABLE} devcore)
-if (EVMJIT)
-	target_link_libraries(${EXECUTABLE} evmjit-cpp)
+if(EVMJIT)
+    target_link_libraries(evm PRIVATE evmjit)
+    target_compile_definitions(evm PRIVATE ETH_EVMJIT)
 endif()
 
-install( TARGETS ${EXECUTABLE} RUNTIME DESTINATION bin ARCHIVE DESTINATION lib LIBRARY DESTINATION lib )
-install( FILES ${HEADERS} DESTINATION include/${EXECUTABLE} )
-
+if(HERA)
+    target_link_libraries(evm PRIVATE hera)
+    target_compile_definitions(evm PRIVATE ETH_HERA)
+endif()
